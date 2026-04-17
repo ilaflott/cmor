@@ -285,15 +285,34 @@ int cmor_set_variable_entry(cmor_table_t * table,
     return (0);
 }
 
-static int cmor_variable_entry_uses_nested_brands(json_object *json)
+enum cmor_variable_entry_shape {
+    CMOR_VARIABLE_ENTRY_FLAT = 0,
+    CMOR_VARIABLE_ENTRY_NESTED = 1,
+    CMOR_VARIABLE_ENTRY_INVALID = -1
+};
+
+static int cmor_get_variable_entry_shape(json_object *json)
 {
+    int has_objects = 0;
+    int has_non_objects = 0;
+
     json_object_object_foreach(json, attr, value) {
         if (attr[0] == '#') {
             continue;
         }
-        return json_object_is_type(value, json_type_object);
+        if (json_object_is_type(value, json_type_object)) {
+            has_objects = 1;
+        } else {
+            has_non_objects = 1;
+        }
+        if (has_objects && has_non_objects) {
+            return (CMOR_VARIABLE_ENTRY_INVALID);
+        }
     }
-    return (0);
+    if (has_objects) {
+        return (CMOR_VARIABLE_ENTRY_NESTED);
+    }
+    return (CMOR_VARIABLE_ENTRY_FLAT);
 }
 
 static int cmor_set_nested_variable_entry(cmor_table_t *table,
@@ -1063,6 +1082,7 @@ int cmor_load_table_internal(char szTable[CMOR_MAX_STRING], int *table_id,
             done = 1;
         } else if (strcmp(key, JSON_KEY_VARIABLE_ENTRY) == 0) {
             json_object_object_foreach(value, varname, attributes) {
+                int variable_entry_shape;
 
                 if (varname[0] == '#') {
                     continue;
@@ -1070,8 +1090,17 @@ int cmor_load_table_internal(char szTable[CMOR_MAX_STRING], int *table_id,
                 if (attributes == NULL) {
                     return (TABLE_ERROR);
                 }
+                variable_entry_shape = cmor_get_variable_entry_shape(attributes);
+                if (variable_entry_shape == CMOR_VARIABLE_ENTRY_INVALID) {
+                    cmor_handle_error_variadic(
+                        "Variable entry '%s' mixes nested brand objects with regular attributes",
+                        CMOR_CRITICAL,
+                        varname);
+                    cmor_pop_traceback();
+                    return (TABLE_ERROR);
+                }
                 if (json_object_is_type(attributes, json_type_object) &&
-                    cmor_variable_entry_uses_nested_brands(attributes)) {
+                    variable_entry_shape == CMOR_VARIABLE_ENTRY_NESTED) {
                     json_object_object_foreach(attributes, brandname,
                                                brand_attributes) {
                         if (brandname[0] == '#') {
@@ -1080,6 +1109,10 @@ int cmor_load_table_internal(char szTable[CMOR_MAX_STRING], int *table_id,
                         if (brand_attributes == NULL ||
                             !json_object_is_type(brand_attributes,
                                                  json_type_object)) {
+                            cmor_handle_error_variadic(
+                                "Nested variable entry '%s' brand '%s' must be an object",
+                                CMOR_CRITICAL,
+                                varname, brandname);
                             return (TABLE_ERROR);
                         }
                         if (cmor_set_nested_variable_entry(
