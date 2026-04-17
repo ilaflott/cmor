@@ -2,6 +2,7 @@ import json
 import cmor
 import unittest
 import os
+from pathlib import Path
 
 from netCDF4 import Dataset
 
@@ -46,23 +47,76 @@ class TestBrandedVariable(unittest.TestCase):
         """
         Write out a simple file using CMOR
         """
+        self.input_json = Path("Test/input_branded_variable.json")
+        self.nested_table = Path("TestTables/CMIP6_Omon_branded_variable_nested.json")
+
         # Set up CMOR
         cmor.setup(inpath="TestTables", netcdf_file_action=cmor.CMOR_REPLACE,
                    logfile="cmor.log", create_subdirectories=0)
 
         # Define dataset using DATASET_INFO
-        with open("Test/input_branded_variable.json", "w") as input_file_handle:
+        with self.input_json.open("w") as input_file_handle:
             json.dump(DATASET_INFO, input_file_handle, sort_keys=True, indent=4)
 
         # read dataset info
-        error_flag = cmor.dataset_json("Test/input_branded_variable.json")
+        error_flag = cmor.dataset_json(str(self.input_json))
         if error_flag:
             raise RuntimeError("CMOR dataset_json call failed")
 
+        self._write_nested_table(
+            Path("TestTables/CMIP6_Omon_branded_variable.json"),
+            self.nested_table,
+        )
+
+    def tearDown(self):
+        self.input_json.unlink(missing_ok=True)
+        self.nested_table.unlink(missing_ok=True)
+
+    def _write_nested_table(self, source, destination):
+        with source.open() as table_handle:
+            table = json.load(table_handle)
+
+        nested_entries = {}
+        for variable_entry, cfg in table["variable_entry"].items():
+            out_name = cfg.get("out_name", variable_entry)
+            brand_name = ""
+            prefix = f"{out_name}_"
+            if variable_entry.startswith(prefix):
+                brand_name = variable_entry[len(prefix):]
+            nested_entries.setdefault(out_name, {})[brand_name] = cfg
+
+        table["variable_entry"] = nested_entries
+
+        with destination.open("w") as table_handle:
+            json.dump(table, table_handle, sort_keys=True, indent=4)
 
     def test_variable_without_branding_suffix(self):
         mip_table = "CMIP6_Omon_branded_variable.json"
         table_id = cmor.load_table(mip_table)
+
+        itim = cmor.axis(
+            table_entry='time',
+            units='months since 2010-1-1',
+            coord_vals=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            cell_bounds=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+        ivar = cmor.variable('thetaoga', units='deg_C', axis_ids=[itim, ])
+
+        data = [280., ] * 12
+        cmor.write(ivar, data)
+        filename = cmor.close(ivar, file_name=True)
+
+        ds = Dataset(filename)
+        attrs = ds.ncattrs()
+        self.assertTrue('branding_suffix' not in attrs)
+        self.assertTrue('temporal_label' not in attrs)
+        self.assertTrue('vertical_label' not in attrs)
+        self.assertTrue('horizontal_label' not in attrs)
+        self.assertTrue('area_label' not in attrs)
+        ds.close()
+        os.remove(filename)
+
+    def test_nested_variable_without_branding_suffix(self):
+        table_id = cmor.load_table(self.nested_table.name)
 
         itim = cmor.axis(
             table_entry='time',
@@ -96,6 +150,36 @@ class TestBrandedVariable(unittest.TestCase):
             coord_vals=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
             cell_bounds=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
         ivar = cmor.variable('thetaoga_w1-x2-y3-z4', units='deg_C', axis_ids=[itim, ])
+
+        data = [280., ] * 12
+        cmor.write(ivar, data)
+        filename = cmor.close(ivar, file_name=True)
+
+        ds = Dataset(filename)
+        attrs = ds.ncattrs()
+        self.assertTrue('branding_suffix' in attrs)
+        self.assertEqual('w1-x2-y3-z4', ds.getncattr('branding_suffix'))
+        self.assertTrue('temporal_label' in attrs)
+        self.assertEqual('w1', ds.getncattr('temporal_label'))
+        self.assertTrue('vertical_label' in attrs)
+        self.assertEqual('x2', ds.getncattr('vertical_label'))
+        self.assertTrue('horizontal_label' in attrs)
+        self.assertEqual('y3', ds.getncattr('horizontal_label'))
+        self.assertTrue('area_label' in attrs)
+        self.assertEqual('z4', ds.getncattr('area_label'))
+        ds.close()
+        os.remove(filename)
+
+    def test_nested_variable_with_branding_suffix(self):
+        table_id = cmor.load_table(self.nested_table.name)
+
+        itim = cmor.axis(
+            table_entry='time',
+            units='months since 2010-1-1',
+            coord_vals=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+            cell_bounds=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+        ivar = cmor.variable('thetaoga_w1-x2-y3-z4', units='deg_C',
+                             axis_ids=[itim, ])
 
         data = [280., ] * 12
         cmor.write(ivar, data)
