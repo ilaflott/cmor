@@ -323,9 +323,6 @@ static int cmor_set_nested_variable_entry(cmor_table_t *table,
     extern int cmor_ntables;
     int entry_len;
     char variable_entry[CMOR_MAX_STRING];
-    char *szTableId;
-
-    szTableId = cmor_tables[cmor_ntables].szTable_id;
 
     if (brand_name[0] == '\0') {
         entry_len = snprintf(variable_entry, CMOR_MAX_STRING, "%s",
@@ -339,8 +336,10 @@ static int cmor_set_nested_variable_entry(cmor_table_t *table,
         cmor_handle_error_variadic(
             "Variable entry is too long for table: %s",
             CMOR_CRITICAL,
-            szTableId);
-        cmor_ntables--;
+            table->szTable_id);
+        if (cmor_ntables >= 0 && table == &cmor_tables[cmor_ntables]) {
+            cmor_ntables--;
+        }
         return (1);
     }
 
