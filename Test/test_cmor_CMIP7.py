@@ -45,6 +45,7 @@ class TestCMIP7(unittest.TestCase):
         Write out a simple file using CMOR
         """
         self.input_json = Path("Test/input_cmip7.json")
+        self.nested_ocean_table = Path(CMIP7_TABLES_PATH) / "CMIP7_ocean_nested.json"
 
         # Set up CMOR
         cmor.setup(inpath=CMIP7_TABLES_PATH, netcdf_file_action=cmor.CMOR_REPLACE)
@@ -58,8 +59,32 @@ class TestCMIP7(unittest.TestCase):
         if error_flag:
             raise RuntimeError("CMOR dataset_json call failed")
 
+        self._write_nested_table(
+            Path("TestTables/CMIP7_ocean2d.json"),
+            self.nested_ocean_table,
+        )
+
     def tearDown(self):
         self.input_json.unlink(missing_ok=True)
+        self.nested_ocean_table.unlink(missing_ok=True)
+
+    def _write_nested_table(self, source, destination):
+        with source.open() as table_handle:
+            table = json.load(table_handle)
+
+        nested_entries = {}
+        for variable_entry, cfg in table["variable_entry"].items():
+            out_name = cfg.get("out_name", variable_entry)
+            brand_name = ""
+            prefix = f"{out_name}_"
+            if variable_entry.startswith(prefix):
+                brand_name = variable_entry[len(prefix):]
+            nested_entries.setdefault(out_name, {})[brand_name] = cfg
+
+        table["variable_entry"] = nested_entries
+
+        with destination.open("w") as table_handle:
+            json.dump(table, table_handle, sort_keys=True, indent=4)
 
     def test_cmip7(self):
         data = [27] * (2 * 3 * 4)
@@ -189,6 +214,57 @@ class TestCMIP7(unittest.TestCase):
             'data_specs_version': 'CMIP-7.0.0.0',
             'host_collection': 'CMIP7',
             'realm': 'atmos land landIce',
+        }
+
+        for attr, val in test_attrs.items():
+            self.assertIn(attr, attrs)
+            self.assertEqual(val, ds.getncattr(attr))
+
+        ds.close()
+
+    def test_nested_variable_entry(self):
+        data = [27] * (2 * 3 * 4)
+        tos = numpy.array(data)
+        tos.shape = (2, 3, 4)
+        lat = numpy.array([10, 20, 30])
+        lat_bnds = numpy.array([5, 15, 25, 35])
+        lon = numpy.array([0, 90, 180, 270])
+        lon_bnds = numpy.array([-45, 45,
+                                135,
+                                225,
+                                315
+                                ])
+        time = numpy.array([15.5, 45])
+        time_bnds = numpy.array([0, 31, 60])
+        cmor.load_table(self.nested_ocean_table.name)
+        cmorlat = cmor.axis("latitude",
+                            coord_vals=lat,
+                            cell_bounds=lat_bnds,
+                            units="degrees_north")
+        cmorlon = cmor.axis("longitude",
+                            coord_vals=lon,
+                            cell_bounds=lon_bnds,
+                            units="degrees_east")
+        cmortime = cmor.axis("time",
+                             coord_vals=time,
+                             cell_bounds=time_bnds,
+                             units="days since 2018")
+        axes = [cmortime, cmorlat, cmorlon]
+        cmortos = cmor.variable("tos_tavg-u-hxy-sea", "degC", axes)
+        self.assertEqual(cmor.write(cmortos, tos), 0)
+        filename = cmor.close(cmortos, file_name=True)
+        self.assertEqual(cmor.close(), 0)
+
+        ds = Dataset(filename)
+        attrs = ds.ncattrs()
+        test_attrs = {
+            'branded_variable': 'tos_tavg-u-hxy-sea',
+            'branding_suffix': 'tavg-u-hxy-sea',
+            'temporal_label': 'tavg',
+            'vertical_label': 'u',
+            'horizontal_label': 'hxy',
+            'area_label': 'sea',
+            'realm': 'ocean',
         }
 
         for attr, val in test_attrs.items():

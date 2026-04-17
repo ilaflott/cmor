@@ -285,6 +285,49 @@ int cmor_set_variable_entry(cmor_table_t * table,
     return (0);
 }
 
+static int cmor_variable_entry_uses_nested_brands(json_object *json)
+{
+    json_object_object_foreach(json, attr, value) {
+        if (attr[0] == '#') {
+            continue;
+        }
+        return json_object_is_type(value, json_type_object);
+    }
+    return (0);
+}
+
+static int cmor_set_nested_variable_entry(cmor_table_t *table,
+                                          char *variable_name,
+                                          char *brand_name,
+                                          json_object *json)
+{
+    extern int cmor_ntables;
+    int entry_len;
+    char variable_entry[CMOR_MAX_STRING];
+    char *szTableId;
+
+    szTableId = cmor_tables[cmor_ntables].szTable_id;
+
+    if (brand_name[0] == '\0') {
+        entry_len = snprintf(variable_entry, CMOR_MAX_STRING, "%s",
+                             variable_name);
+    } else {
+        entry_len = snprintf(variable_entry, CMOR_MAX_STRING, "%s_%s",
+                             variable_name, brand_name);
+    }
+
+    if (entry_len < 0 || entry_len >= CMOR_MAX_STRING) {
+        cmor_handle_error_variadic(
+            "Variable entry is too long for table: %s",
+            CMOR_CRITICAL,
+            szTableId);
+        cmor_ntables--;
+        return (1);
+    }
+
+    return cmor_set_variable_entry(table, variable_entry, json);
+}
+
 /************************************************************************/
 /*                        cmor_set_axis_entry()                         */
 /************************************************************************/
@@ -1027,8 +1070,27 @@ int cmor_load_table_internal(char szTable[CMOR_MAX_STRING], int *table_id,
                 if (attributes == NULL) {
                     return (TABLE_ERROR);
                 }
-                if (cmor_set_variable_entry(&cmor_tables[cmor_ntables],
-                                            varname, attributes) == 1) {
+                if (json_object_is_type(attributes, json_type_object) &&
+                    cmor_variable_entry_uses_nested_brands(attributes)) {
+                    json_object_object_foreach(attributes, brandname,
+                                               brand_attributes) {
+                        if (brandname[0] == '#') {
+                            continue;
+                        }
+                        if (brand_attributes == NULL ||
+                            !json_object_is_type(brand_attributes,
+                                                 json_type_object)) {
+                            return (TABLE_ERROR);
+                        }
+                        if (cmor_set_nested_variable_entry(
+                                &cmor_tables[cmor_ntables], varname,
+                                brandname, brand_attributes) == 1) {
+                            cmor_pop_traceback();
+                            return (TABLE_ERROR);
+                        }
+                    }
+                } else if (cmor_set_variable_entry(&cmor_tables[cmor_ntables],
+                                                   varname, attributes) == 1) {
                     cmor_pop_traceback();
                     return (TABLE_ERROR);
                 }
